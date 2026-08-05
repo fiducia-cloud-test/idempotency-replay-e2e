@@ -20,7 +20,7 @@ Source organization: `fiducia-cloud`
 |---|---:|---|
 | `fiducia-cloud/fiducia-node.rs` | `b9177646f9c69c67b76b3fbee9fded9b585e9c0c` | `main` |
 | `fiducia-cloud/fiducia-edge` | `d01776fea3fcc897003cbb214548e72b6f953f5f` | `main` |
-| `fiducia-cloud/fiducia-clients` | `0ff5f695c2ce440b19ae8104031ed2d47c080218` | `main` |
+| `fiducia-cloud/fiducia-clients` | `e58ed9a0c186f6e9a55dcfb3eef71ea5c409fae0` | `main` |
 
 ## Dependency lanes
 
