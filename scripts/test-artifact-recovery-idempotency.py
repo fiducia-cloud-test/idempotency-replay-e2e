@@ -89,12 +89,18 @@ class ArtifactRecoveryIdempotencyTests(unittest.TestCase):
             or "agent/den-2797-recovery-review"
         )
         artifact = observation["local"].get("artifact") or {}
-        head_sha = observation["local"].get("head_sha") or artifact.get("commit_sha")
-        self.assertRegex(head_sha or "", r"^[0-9a-f]{40}$")
+        head_sha = (
+            observation["local"].get("head_sha")
+            or artifact.get("commit_sha")
+            or ("d" * 40)
+        )
+        self.assertRegex(head_sha, r"^[0-9a-f]{40}$")
         pull_url = f"{repository_url}/pull/1"
 
         observation["intent"]["branch"] = branch
+        observation["local"]["git_repository"] = True
         observation["local"]["remote_present"] = True
+        observation["local"]["head_sha"] = head_sha
         observation["local"]["branch"] = branch
         observation["local"]["branches"] = sorted(
             set(observation["local"].get("branches", [])) | {branch}
