@@ -1,0 +1,145 @@
+name: Artifact recovery idempotency and replay
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/artifact-recovery-idempotency.yml
+      - artifact-recovery-source.json
+      - scripts/test-artifact-recovery-idempotency.py
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/artifact-recovery-idempotency.yml
+      - artifact-recovery-source.json
+      - scripts/test-artifact-recovery-idempotency.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: artifact-recovery-idempotency-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  replay-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out test harness without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          show-progress: false
+
+      - name: Check out pinned artifact-recovery source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ORESoftware/ai-agent-coordinator.rs
+          ref: 2af7d4a2b7c68216dc2e0ff3658844ab4ef5fbf5
+          path: external/ai-agent-coordinator
+          persist-credentials: false
+          show-progress: false
+
+      - name: Install Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+
+      - name: Validate immutable source pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m json.tool artifact-recovery-source.json >/dev/null
+          expected="$(python3 -c 'import json; print(json.load(open("artifact-recovery-source.json"))["commit"])')"
+          actual="$(git -C external/ai-agent-coordinator rev-parse HEAD)"
+          test "$actual" = "$expected"
+          test "$(git -C external/ai-agent-coordinator remote get-url origin)" = \
+            'https://github.com/ORESoftware/ai-agent-coordinator.rs'
+
+      - name: Validate workflow syntax
+        uses: docker://rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
+        with:
+          args: .github/workflows/artifact-recovery-idempotency.yml
+
+      - name: Compile source and test-org suites
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            external/ai-agent-coordinator/tools/artifact_recovery_ledger.py \
+            external/ai-agent-coordinator/tools/artifact_recovery/*.py \
+            external/ai-agent-coordinator/tools/enqueue_artifact_recovery.py \
+            external/ai-agent-coordinator/scripts/build_artifact_recovery_backfill.py \
+            external/ai-agent-coordinator/tests/test_artifact_recovery_ledger.py \
+            external/ai-agent-coordinator/tests/test_enqueue_artifact_recovery.py \
+            scripts/test-artifact-recovery-idempotency.py
+
+      - name: Re-run source acceptance suites at the immutable pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p test-results/artifact-recovery
+          (
+            cd external/ai-agent-coordinator
+            python3 -m unittest -v \
+              tests/test_artifact_recovery_ledger.py \
+              tests/test_enqueue_artifact_recovery.py
+          ) 2>&1 | tee test-results/artifact-recovery/source-tests.txt
+
+      - name: Run cross-organization idempotency and replay tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/test-artifact-recovery-idempotency.py \
+            --source-root external/ai-agent-coordinator \
+            2>&1 | tee test-results/artifact-recovery/test-org-tests.txt
+
+      - name: Reject credential-shaped literals in the added surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -nE 'gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|cfat_[A-Za-z0-9_]{20,}|lin_api_[A-Za-z0-9_]{20,}' \
+            artifact-recovery-source.json \
+            scripts/test-artifact-recovery-idempotency.py \
+            .github/workflows/artifact-recovery-idempotency.yml
+          then
+            echo 'credential-shaped literal found in artifact-recovery test surface' >&2
+            exit 1
+          fi
+
+      - name: Write bounded evidence summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          pin = json.loads(Path('artifact-recovery-source.json').read_text())
+          summary = {
+              'schema_version': 'artifact_recovery_test_org_evidence.v1',
+              'source_repository': pin['repository'],
+              'source_commit': pin['commit'],
+              'test_repository': 'fiducia-cloud-test/idempotency-replay-e2e',
+              'contracts': [
+                  'input-order-determinism',
+                  'remote-completion-reconciliation',
+                  'owner-repository-key-isolation',
+                  'monotonic-material-retries',
+                  'green-draft-terminal-evidence',
+              ],
+              'result': 'passed',
+          }
+          Path('test-results/artifact-recovery/summary.json').write_text(
+              json.dumps(summary, indent=2, sort_keys=True) + '\n'
+          )
+          PY
+
+      - name: Upload exact-head test evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: artifact-recovery-idempotency-${{ github.sha }}
+          path: test-results/artifact-recovery
+          retention-days: 14
+          if-no-files-found: error
