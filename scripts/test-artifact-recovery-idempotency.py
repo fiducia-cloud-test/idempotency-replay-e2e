@@ -44,7 +44,10 @@ class ArtifactRecoveryIdempotencyTests(unittest.TestCase):
 
     @staticmethod
     def identity(item: dict) -> str:
-        return item["target"]["identity"].lower()
+        target = item["target"]
+        return target.get(
+            "identity", f"{target['owner']}/{target['repository']}"
+        ).lower()
 
     def test_reversing_observation_order_is_byte_stable(self) -> None:
         forward = self.fixture()
@@ -85,11 +88,17 @@ class ArtifactRecoveryIdempotencyTests(unittest.TestCase):
             or observation["local"].get("branch")
             or "agent/den-2797-recovery-review"
         )
-        head_sha = observation["local"].get("head_sha")
+        artifact = observation["local"].get("artifact") or {}
+        head_sha = observation["local"].get("head_sha") or artifact.get("commit_sha")
         self.assertRegex(head_sha or "", r"^[0-9a-f]{40}$")
         pull_url = f"{repository_url}/pull/1"
 
+        observation["intent"]["branch"] = branch
         observation["local"]["remote_present"] = True
+        observation["local"]["branch"] = branch
+        observation["local"]["branches"] = sorted(
+            set(observation["local"].get("branches", [])) | {branch}
+        )
         observation["remote"] = {
             "collected": True,
             "repository": {
@@ -173,7 +182,6 @@ class ArtifactRecoveryIdempotencyTests(unittest.TestCase):
         second["target"].update(
             owner="example-test-owner",
             repository="example-recovery-e2e",
-            identity="example-test-owner/example-recovery-e2e",
         )
         second["claims"] = {
             "repository_url": None,
@@ -213,13 +221,13 @@ class ArtifactRecoveryIdempotencyTests(unittest.TestCase):
         third, third_queue = self.reconcile(changed_twice, second)
         replay, replay_queue = self.reconcile(changed_twice, third)
 
+        original_identity = self.identity(original["items"][0])
         key = next(
             key
             for key, entry in first["entries"].items()
             if entry["observation"]["origin"]["id"]
             == original["items"][0]["origin"]["id"]
-            and entry["observation"]["target"]["identity"]
-            == original["items"][0]["target"]["identity"]
+            and entry["observation"]["target"]["identity"] == original_identity
         )
         self.assertEqual(second["entries"][key]["attempts"], 2)
         self.assertEqual(third["entries"][key]["attempts"], 3)
