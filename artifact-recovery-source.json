@@ -1,0 +1,8 @@
+{
+  "schema_version": "artifact_recovery_source_pin.v1",
+  "repository": "ORESoftware/ai-agent-coordinator.rs",
+  "commit": "2af7d4a2b7c68216dc2e0ff3658844ab4ef5fbf5",
+  "recovery_merge_commit": "624c2bae2ac92f65a3a0e86a842fed83758d0972",
+  "linear_issue": "DEN-2797",
+  "purpose": "Cross-organization idempotency, replay, and remote-evidence transition tests"
+}
